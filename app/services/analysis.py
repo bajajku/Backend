@@ -147,6 +147,14 @@ Return a JSON object with this EXACT structure:
   "background_color": "#0a0a1a",
   "ambient_color": "#ffffff",
 
+  "particle_visualization": {{
+    "description": "Brief description of what shape/visualization this creates",
+    "particle_count": 1500,
+    "colors": ["#6ea8fe", "#4ecdc4", "#45b7d1"],
+    "generator_code": "JavaScript code that returns array of {{x, y, z}} particle positions",
+    "animation_code": "Optional: custom animation code for the particles"
+  }},
+
   "suggested_exploration_order": ["id1", "id2", "id3"]
 }}
 
@@ -179,10 +187,67 @@ GUIDELINES:
    - Suggest a logical learning path through the concepts
    - Start with foundational concepts, build to complex ones
 
+6. PARTICLE VISUALIZATION (IMPORTANT - be creative!):
+   Create a content-aware animated background that visually represents the document's theme.
+   
+   The generator_code must be a JavaScript function body that:
+   - Uses 'count' variable (the particle count)
+   - Returns an array of objects with x, y, z coordinates
+   - Creates a shape/pattern related to the content
+   
+   Examples:
+   - Brain/Neuroscience: Create a brain-like network with neural connections
+   - DNA/Genetics: Create a double helix spiral
+   - Solar System/Astronomy: Create orbital rings with clustered particles
+   - Chemistry/Molecules: Create molecular bond structures
+   - History/Timeline: Create flowing particles along a path
+   - Physics/Waves: Create wave patterns
+   - Mathematics: Create geometric patterns like fractals or spirals
+   - Biology/Cells: Create cell-like circular structures
+   
+   Example generator_code for a DNA helix:
+   ```
+   const particles = [];
+   for (let i = 0; i < count; i++) {{
+     const t = (i / count) * Math.PI * 6;
+     const strand = i % 2;
+     const radius = 2;
+     particles.push({{
+       x: Math.cos(t + strand * Math.PI) * radius,
+       y: (i / count) * 20 - 10,
+       z: Math.sin(t + strand * Math.PI) * radius
+     }});
+   }}
+   return particles;
+   ```
+   
+   Example generator_code for a brain-like neural network:
+   ```
+   const particles = [];
+   for (let i = 0; i < count; i++) {{
+     const theta = Math.random() * Math.PI * 2;
+     const phi = Math.acos(2 * Math.random() - 1);
+     const r = 4 * (0.8 + Math.random() * 0.4);
+     const stretch = 0.75;
+     particles.push({{
+       x: r * Math.sin(phi) * Math.cos(theta),
+       y: r * Math.sin(phi) * Math.sin(theta) * stretch,
+       z: r * Math.cos(phi) * 0.9
+     }});
+   }}
+   return particles;
+   ```
+   
+   The animation_code is optional JavaScript that runs each frame with access to:
+   - 'particles': the THREE.Points object
+   - 'time': elapsed time in seconds
+   - 'positions': the position attribute array
+
 DOCUMENT CONTENT:
 {content}
 
 Return ONLY valid JSON. No markdown, no explanation."""
+
 
 
 async def extract_concept_graph(content: str, llm: LLM) -> ConceptGraph:

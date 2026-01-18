@@ -331,3 +331,128 @@ async def generate_3d_experience_v2(
             tmp_path.unlink()
         except Exception:
             pass
+
+
+# ============================================================
+# NEW: Anatomical 3D Model Generation (v3)
+# ============================================================
+
+from app.services.anatomical_generator import (
+    AnatomicalModelError,
+    generate_anatomical_model,
+    generate_anatomical_scene_html,
+)
+
+
+@router.post("/generate-v3")
+async def generate_3d_experience_v3(
+    file: Annotated[UploadFile, File(description="Document file (PDF, PPTX, or TXT)")],
+    services: Annotated[Services, Depends(get_services)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """Generate interactive 3D HTML with anatomical/subject-specific models.
+
+    This is the NEWEST approach that:
+    - Creates ACTUAL 3D representations (brain lobes, solar system, molecules)
+    - LLM generates the Three.js geometry code directly
+    - Produces visually accurate educational models, not abstract concepts
+
+    Accepts PDF, PPTX, or TXT files and returns a self-contained HTML file.
+    """
+    logger.info(
+        "generate_v3_request",
+        filename=file.filename,
+        content_type=file.content_type,
+    )
+
+    # Validate file type
+    if not file.content_type or not is_supported_mime_type(file.content_type):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "detail": f"Unsupported file type: {file.content_type}",
+                "error_code": "UNSUPPORTED_FILE_TYPE",
+            },
+        )
+
+    # Check file size
+    content = await file.read()
+    if len(content) > settings.max_file_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "detail": f"File too large. Maximum size: {settings.max_file_size_mb}MB",
+                "error_code": "FILE_TOO_LARGE",
+            },
+        )
+
+    # Save to temporary file
+    suffix = Path(file.filename).suffix if file.filename else ".tmp"
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = Path(tmp_file.name)
+
+    try:
+        tmp_file.write(content)
+        tmp_file.close()
+
+        # Step 1: Extract content
+        try:
+            text = await extract_content(tmp_path, file.content_type)
+        except ExtractionError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"detail": str(e), "error_code": "EXTRACTION_FAILED"},
+            )
+
+        if not text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "detail": "No text content found in document",
+                    "error_code": "EMPTY_DOCUMENT",
+                },
+            )
+
+        # Step 2: Generate anatomical 3D model specification
+        try:
+            model_spec = await generate_anatomical_model(text, services.llm)
+        except AnatomicalModelError as e:
+            raise HTTPException(
+                status_code=500,
+                detail={"detail": str(e), "error_code": "MODEL_GENERATION_FAILED"},
+            )
+
+        # Step 3: Generate audio narrations for each part
+        narrations = {part["id"]: part["description"] for part in model_spec.get("parts", [])}
+        audio_result = await synthesize_audio(narrations, settings, services.gcs)
+
+        # Step 4: Generate HTML with anatomical 3D model
+        html = generate_anatomical_scene_html(model_spec, audio_result.base64)
+
+        # Create safe filename
+        title = model_spec.get("title", "3D Model")
+        safe_title = "".join(
+            c if c.isalnum() or c in " -_" else "_" for c in title
+        )
+        safe_title = safe_title.replace(" ", "_")[:50]
+        filename = f"{safe_title}_3D.html"
+
+        logger.info(
+            "generation_v3_complete",
+            title=title,
+            parts=len(model_spec.get("parts", [])),
+            html_size=len(html),
+        )
+
+        return HTMLResponse(
+            content=html,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    finally:
+        # Cleanup temp file
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+

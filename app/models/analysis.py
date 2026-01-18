@@ -104,6 +104,31 @@ class ConceptCategory(BaseModel):
     description: str | None = None
 
 
+class ParticleVisualization(BaseModel):
+    """LLM-generated particle system for content-aware background animations."""
+
+    description: str = Field(
+        description="Brief description of what the particle visualization represents"
+    )
+    particle_count: int = Field(
+        default=1500,
+        ge=500,
+        le=5000,
+        description="Number of particles (500-5000)"
+    )
+    colors: list[str] = Field(
+        default_factory=lambda: ["#6ea8fe", "#4ecdc4"],
+        description="List of hex colors for particles"
+    )
+    generator_code: str = Field(
+        description="JavaScript function body that generates particle positions. Must return array of {x, y, z} objects."
+    )
+    animation_code: str | None = Field(
+        default=None,
+        description="Optional JavaScript code for custom particle animation in the render loop"
+    )
+
+
 class ConceptGraph(BaseModel):
     """Complete concept graph extracted from document."""
 
@@ -129,6 +154,12 @@ class ConceptGraph(BaseModel):
     # Visual theme
     background_color: str = Field(default="#0a0a1a", description="Scene background color")
     ambient_color: str = Field(default="#ffffff", description="Ambient light color")
+
+    # Content-aware particle visualization (LLM-generated)
+    particle_visualization: ParticleVisualization | None = Field(
+        default=None,
+        description="Optional LLM-generated particle system for content-aware background"
+    )
 
     # Learning path (optional)
     suggested_exploration_order: list[str] = Field(

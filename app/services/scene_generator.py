@@ -14,6 +14,34 @@ from app.models.analysis import ConceptGraph
 logger = structlog.get_logger()
 
 
+def _generate_particle_viz_js(graph: ConceptGraph) -> str:
+    """Generate JavaScript object literal for particle visualization.
+    
+    Args:
+        graph: The concept graph with optional particle_visualization
+        
+    Returns:
+        JavaScript object literal string (or 'null' if no visualization)
+    """
+    if not graph.particle_visualization:
+        return "null"
+    
+    pv = graph.particle_visualization
+    # Escape the generator code for JavaScript string embedding
+    generator_code = json.dumps(pv.generator_code)
+    animation_code = json.dumps(pv.animation_code) if pv.animation_code else "null"
+    colors = json.dumps(pv.colors)
+    description = json.dumps(pv.description)
+    
+    return f"""{{
+        description: {description},
+        particleCount: {pv.particle_count},
+        colors: {colors},
+        generatorCode: {generator_code},
+        animationCode: {animation_code}
+    }}"""
+
+
 def generate_primitive_scene_html(
     graph: ConceptGraph,
     audio_data: dict[str, str],  # concept_id -> base64 audio data URI
@@ -436,16 +464,78 @@ def generate_primitive_scene_html(
         scene.add(directionalLight);
 
         // ============================================================
-        // CREATE STARS
+        // CREATE CONTENT-AWARE PARTICLE VISUALIZATION
         // ============================================================
+        let contentParticles = null;
+        let contentParticleMaterial = null;
+        let particleBasePositions = null;
+        
+        // LLM-generated particle visualization data
+        const particleViz = {_generate_particle_viz_js(graph)};
+        
+        if (particleViz && particleViz.generatorCode) {{
+            try {{
+                // Execute LLM-generated particle generator
+                const count = particleViz.particleCount || 1500;
+                const generateParticles = new Function('count', particleViz.generatorCode);
+                const particleData = generateParticles(count);
+                
+                if (Array.isArray(particleData) && particleData.length > 0) {{
+                    const particleGeo = new THREE.BufferGeometry();
+                    const positions = new Float32Array(particleData.length * 3);
+                    const colors = new Float32Array(particleData.length * 3);
+                    
+                    // Parse colors from LLM
+                    const colorPalette = (particleViz.colors || ['#6ea8fe', '#4ecdc4']).map(
+                        hex => new THREE.Color(hex)
+                    );
+                    
+                    particleData.forEach((p, i) => {{
+                        positions[i * 3] = p.x || 0;
+                        positions[i * 3 + 1] = p.y || 0;
+                        positions[i * 3 + 2] = p.z || 0;
+                        
+                        // Assign colors from palette
+                        const color = colorPalette[i % colorPalette.length];
+                        colors[i * 3] = color.r;
+                        colors[i * 3 + 1] = color.g;
+                        colors[i * 3 + 2] = color.b;
+                    }});
+                    
+                    particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    particleGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                    
+                    // Store base positions for animation
+                    particleBasePositions = positions.slice();
+                    
+                    contentParticleMaterial = new THREE.PointsMaterial({{
+                        size: 0.08,
+                        vertexColors: true,
+                        transparent: true,
+                        opacity: 0.8,
+                        blending: THREE.AdditiveBlending,
+                        sizeAttenuation: true
+                    }});
+                    
+                    contentParticles = new THREE.Points(particleGeo, contentParticleMaterial);
+                    scene.add(contentParticles);
+                    
+                    console.log('Created content-aware particle visualization:', particleViz.description);
+                }}
+            }} catch (e) {{
+                console.warn('Failed to create particle visualization:', e);
+            }}
+        }}
+        
+        // Fallback: Create ambient stars if no content particles or as additional layer
         const starGeo = new THREE.BufferGeometry();
-        const starCount = 500;
+        const starCount = contentParticles ? 200 : 500; // Fewer stars if we have content particles
         const starPositions = new Float32Array(starCount * 3);
         for (let i = 0; i < starCount * 3; i++) {{
             starPositions[i] = (Math.random() - 0.5) * 100;
         }}
         starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-        const starMat = new THREE.PointsMaterial({{ size: 0.1, color: 0x6ea8fe, transparent: true, opacity: 0.6 }});
+        const starMat = new THREE.PointsMaterial({{ size: 0.1, color: 0x6ea8fe, transparent: true, opacity: contentParticles ? 0.3 : 0.6 }});
         const stars = new THREE.Points(starGeo, starMat);
         scene.add(stars);
 
@@ -876,8 +966,54 @@ def generate_primitive_scene_html(
                 }}
             }});
 
+            // Content particle animation
+            if (contentParticles && particleBasePositions) {{
+                const positions = contentParticles.geometry.attributes.position.array;
+                
+                // Check for custom animation code from LLM
+                if (particleViz && particleViz.animationCode) {{
+                    try {{
+                        const customAnimate = new Function('particles', 'time', 'positions', 'basePositions', particleViz.animationCode);
+                        customAnimate(contentParticles, time, positions, particleBasePositions);
+                    }} catch (e) {{
+                        // Fallback to default animation
+                        defaultParticleAnimation(positions, time);
+                    }}
+                }} else {{
+                    // Default breathing/flowing animation
+                    defaultParticleAnimation(positions, time);
+                }}
+                
+                contentParticles.geometry.attributes.position.needsUpdate = true;
+                
+                // Gentle rotation
+                contentParticles.rotation.y += 0.0003;
+                
+                // Subtle opacity pulse
+                if (contentParticleMaterial) {{
+                    contentParticleMaterial.opacity = 0.6 + Math.sin(time * 0.3) * 0.2;
+                }}
+            }}
+            
+            // Default particle animation function
+            function defaultParticleAnimation(positions, time) {{
+                for (let i = 0; i < positions.length; i += 3) {{
+                    // Subtle breathing effect - particles move slightly outward/inward
+                    const baseX = particleBasePositions[i];
+                    const baseY = particleBasePositions[i + 1];
+                    const baseZ = particleBasePositions[i + 2];
+                    
+                    const breathe = Math.sin(time * 0.5 + i * 0.01) * 0.1;
+                    const flow = Math.sin(time * 0.2 + baseY * 0.5) * 0.05;
+                    
+                    positions[i] = baseX * (1 + breathe) + flow;
+                    positions[i + 1] = baseY + Math.sin(time * 0.3 + baseX) * 0.05;
+                    positions[i + 2] = baseZ * (1 + breathe);
+                }}
+            }}
+
             // Star twinkle
-            starMat.opacity = 0.4 + Math.sin(time * 0.5) * 0.2;
+            starMat.opacity = (contentParticles ? 0.2 : 0.4) + Math.sin(time * 0.5) * 0.1;
             stars.rotation.y += 0.0002;
 
             checkHover();
