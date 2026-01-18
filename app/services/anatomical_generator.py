@@ -6,12 +6,79 @@ code directly for maximum creativity and accuracy.
 """
 
 import json
+import re
 
 import structlog
 
 from app.utils.llm import LLM
 
 logger = structlog.get_logger()
+
+
+def _clean_json_response(text: str) -> str:
+    """Clean LLM JSON response by removing common issues.
+    
+    Args:
+        text: Raw JSON text from LLM
+        
+    Returns:
+        Cleaned JSON string
+    """
+    # Remove markdown code blocks
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    
+    # Remove single-line comments (// ...)
+    text = re.sub(r'//[^\n]*\n', '\n', text)
+    
+    # Remove trailing commas before } or ]
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+    
+    # Remove any leading/trailing whitespace
+    text = text.strip()
+    
+    return text
+
+
+def _parse_json_safely(text: str) -> dict:
+    """Parse JSON with fallback strategies.
+    
+    Args:
+        text: JSON text to parse
+        
+    Returns:
+        Parsed dictionary
+        
+    Raises:
+        json.JSONDecodeError: If all parsing attempts fail
+    """
+    # First try: direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Second try: clean and parse
+    cleaned = _clean_json_response(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    
+    # Third try: find JSON object in text
+    match = re.search(r'\{[\s\S]*\}', cleaned)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    
+    # All attempts failed, raise with original error
+    return json.loads(text)
 
 
 ANATOMICAL_SCENE_PROMPT = """You are an expert 3D modeler and Three.js developer.
@@ -126,7 +193,7 @@ async def generate_anatomical_model(content: str, llm: LLM) -> dict:
     
     try:
         response = await llm.generate_json(prompt)
-        model_spec = json.loads(response)
+        model_spec = _parse_json_safely(response)
         
         logger.info(
             "anatomical_model_generated",
@@ -137,7 +204,11 @@ async def generate_anatomical_model(content: str, llm: LLM) -> dict:
         return model_spec
         
     except json.JSONDecodeError as e:
-        logger.error("anatomical_model_json_parse_failed", error=str(e))
+        logger.error(
+            "anatomical_model_json_parse_failed", 
+            error=str(e),
+            response_preview=response[:500] if response else "empty"
+        )
         raise AnatomicalModelError(f"Failed to parse model JSON: {str(e)}") from e
     except Exception as e:
         logger.error("anatomical_model_generation_failed", error=str(e))
