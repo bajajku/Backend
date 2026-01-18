@@ -4,7 +4,7 @@ import json
 
 import structlog
 
-from app.models.analysis import ContentAnalysis
+from app.models.analysis import ContentAnalysis, ConceptGraph
 from app.utils.llm import LLM
 
 logger = structlog.get_logger()
@@ -90,3 +90,145 @@ async def analyze_content(content: str, llm: LLM) -> ContentAnalysis:
     except Exception as e:
         logger.error("analysis_failed", error=str(e))
         raise AnalysisError(f"Content analysis failed: {str(e)}") from e
+
+
+# ============================================================
+# NEW: Concept Graph Extraction for LLM-Generated 3D Scenes
+# ============================================================
+
+CONCEPT_GRAPH_PROMPT = """You are an expert at extracting knowledge structures from educational content.
+Analyze this document and create a concept graph that will be visualized in 3D.
+
+Your goal: Extract the KEY CONCEPTS and their RELATIONSHIPS to create a meaningful 3D learning experience.
+
+Return a JSON object with this EXACT structure:
+
+{{
+  "title": "Engaging title for the 3D experience",
+  "summary": "2-3 sentence summary of what the user will learn",
+  "subject_area": "biology|physics|chemistry|history|anatomy|mathematics|general|etc",
+
+  "layout_type": "concept-map|hierarchy|timeline|clusters|network",
+
+  "central_concept_id": "main_concept",
+
+  "concepts": [
+    {{
+      "id": "unique_id",
+      "name": "Display Name",
+      "description": "Clear explanation (2-3 sentences). This will be read aloud.",
+      "category": "category_id",
+      "importance": 5,
+      "parent_id": null,
+      "shape": "sphere",
+      "color": null
+    }}
+  ],
+
+  "relationships": [
+    {{
+      "from_id": "concept_a",
+      "to_id": "concept_b",
+      "relationship_type": "relates_to",
+      "label": "optional label",
+      "strength": 3
+    }}
+  ],
+
+  "categories": [
+    {{
+      "id": "category_id",
+      "name": "Category Name",
+      "color": "#3498db",
+      "description": "What this category represents"
+    }}
+  ],
+
+  "background_color": "#0a0a1a",
+  "ambient_color": "#ffffff",
+
+  "suggested_exploration_order": ["id1", "id2", "id3"]
+}}
+
+GUIDELINES:
+
+1. CONCEPTS (5-12 concepts ideal):
+   - Extract the most important concepts that someone should understand
+   - Each concept needs a clear, accessible description (for audio narration)
+   - importance: 5 = central/critical, 1 = supplementary
+   - Shapes: sphere (default), box (containers/categories), cylinder (processes), cone (hierarchies), octahedron (key decisions)
+
+2. RELATIONSHIPS:
+   - Show how concepts connect and influence each other
+   - Types: contains, relates_to, causes, part_of, leads_to, contrasts, supports
+   - strength: 5 = strong connection, 1 = weak connection
+
+3. LAYOUT TYPE:
+   - concept-map: Central idea with related concepts around it (default, good for most)
+   - hierarchy: Tree structure (good for taxonomies, org charts)
+   - timeline: Linear sequence (good for history, processes)
+   - clusters: Grouped by category (good for comparing groups)
+   - network: Free connections (good for complex interrelationships)
+
+4. CATEGORIES:
+   - Group related concepts with colors
+   - Choose distinct, accessible colors
+   - 2-5 categories is ideal
+
+5. EXPLORATION ORDER:
+   - Suggest a logical learning path through the concepts
+   - Start with foundational concepts, build to complex ones
+
+DOCUMENT CONTENT:
+{content}
+
+Return ONLY valid JSON. No markdown, no explanation."""
+
+
+async def extract_concept_graph(content: str, llm: LLM) -> ConceptGraph:
+    """Extract a concept graph from document content.
+
+    This creates a structured representation of concepts and their
+    relationships that can be visualized in 3D.
+
+    Args:
+        content: The extracted text content from the document
+        llm: LLM instance for generation
+
+    Returns:
+        ConceptGraph with nodes, relationships, and layout info
+
+    Raises:
+        AnalysisError: If extraction fails
+    """
+    logger.info("extracting_concept_graph", content_length=len(content))
+
+    # Truncate content if too long
+    truncated_content = content[:15000]
+    if len(content) > 15000:
+        logger.info("content_truncated", original=len(content), truncated=15000)
+
+    prompt = CONCEPT_GRAPH_PROMPT.format(content=truncated_content)
+
+    try:
+        response = await llm.generate_json(prompt)
+        data = json.loads(response)
+        graph = ConceptGraph.model_validate(data)
+
+        logger.info(
+            "concept_graph_extracted",
+            title=graph.title,
+            concepts=len(graph.concepts),
+            relationships=len(graph.relationships),
+            categories=len(graph.categories),
+            layout=graph.layout_type,
+        )
+
+        return graph
+
+    except json.JSONDecodeError as e:
+        logger.error("concept_graph_json_parse_failed", error=str(e))
+        raise AnalysisError(f"Failed to parse concept graph JSON: {str(e)}") from e
+    except Exception as e:
+        logger.error("concept_graph_extraction_failed", error=str(e))
+        raise AnalysisError(f"Concept graph extraction failed: {str(e)}") from e

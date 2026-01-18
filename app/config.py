@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     # Local testing mode - skips cloud dependencies
     local_mode: bool = False
 
-    # Required (optional in local_mode)
+    # LLM Provider: "openrouter" or "google"
+    llm_provider: str = "openrouter"
+
+    # API Keys
+    openrouter_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     elevenlabs_api_key: Optional[str] = None
     gcs_bucket_name: str = "doc-to-3d-models"
@@ -35,8 +39,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # LLM settings
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = "google/gemini-3-flash-preview"  # OpenRouter model format
     llm_temperature: float = 0.7
+    llm_max_tokens: int = 16000  # Max output tokens (HTML generation needs ~8-12k)
 
     # TTS settings
     elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"  # Rachel voice

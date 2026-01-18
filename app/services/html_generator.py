@@ -10,65 +10,96 @@ from app.utils.llm import LLM
 
 logger = structlog.get_logger()
 
-HTML_GENERATION_PROMPT = """Generate a complete, self-contained HTML file with an interactive Three.js 3D scene.
+HTML_GENERATION_PROMPT = """Create an immersive, visually stunning Three.js 3D experience.
 
-SCENE CONFIGURATION:
-- Title: {title}
-- Theme/Mood: {theme}
-- Background color: {background_color}
-- Subject area: {subject_area}
+SCENE: {title}
+THEME: {theme} | COLOR: {background_color} | SUBJECT: {subject_area}
 
-3D MODELS TO LOAD (GLTF format):
+MODELS (each has id, name, url, description, narration_text, audio_url):
 {models_json}
 
-NARRATIONS (play on model click):
-{narrations_json}
+IMPORTANT: Each model has an audio_url field - you MUST use it to play narration audio on click!
 
-REQUIREMENTS:
-1. Use Three.js from CDN (version r160 or newer)
-2. Use GLTFLoader from Three.js addons CDN
-3. Load all GLTF models from the provided URLs
-4. Position models in a logical circular or grid layout with good spacing
-5. Implement OrbitControls for camera rotation/zoom
-6. Hover effects:
-   - Scale model to 1.1x on hover
-   - Show tooltip with model name
-   - Change cursor to pointer
-7. Click effects:
-   - Play narration audio for that model
-   - Animate camera to focus on clicked model
-   - Add subtle pulse/glow animation
-   - Show narration text in a panel
-8. Style the page to match the visual theme:
-   - Use the primary color for accents
-   - Match the mood (scientific=clean/minimal, playful=colorful, etc.)
-9. Include a loading indicator while models load
-10. Accessibility features:
-    - Keyboard navigation (Tab to cycle models, Enter to select)
-    - ARIA labels on interactive elements
-    - Focus indicators
-    - Screen reader announcements for narrations
-11. Responsive design that works on mobile
-12. Add a title overlay showing the scene title
-13. Include a help tooltip explaining controls
+══════════════════════════════════════════════════════════════
+REQUIRED LIBRARIES (include in this exact order):
+══════════════════════════════════════════════════════════════
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script type="importmap">
+{{"imports":{{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}}}
+</script>
 
-STYLING GUIDELINES:
-- Use modern CSS with flexbox/grid
-- Smooth transitions and animations
-- Clean, readable fonts (system fonts or Google Fonts CDN)
-- Semi-transparent panels for UI elements
-- Good contrast for accessibility
+Import: THREE, OrbitControls, GLTFLoader, EffectComposer, RenderPass, UnrealBloomPass
 
-TECHNICAL REQUIREMENTS:
-- All code must be in a single HTML file
-- No external dependencies except CDN links
-- Use async/await for loading
-- Handle loading errors gracefully
-- Dispose of Three.js resources properly
+══════════════════════════════════════════════════════════════
+VISUAL EFFECTS (implement ALL):
+══════════════════════════════════════════════════════════════
+1. ANIMATED BACKGROUND:
+   - Create 200+ particle stars using THREE.Points with random positions
+   - Stars slowly drift and twinkle (vary opacity with sine wave)
+   - Deep gradient from #0a0a1a to #1a1a3a (or theme color)
 
-OUTPUT: Return ONLY the complete HTML file.
-Start exactly with <!DOCTYPE html> and end exactly with </html>.
-Do not include any markdown, explanations, or other text.
+2. CINEMATIC LIGHTING:
+   - Ambient light (soft, low intensity 0.4)
+   - Key directional light (warm white, intensity 1.0, casts shadows)
+   - 2-3 colored point lights matching theme (place behind/around models)
+   - Subtle spotlight follows selected model
+
+3. POST-PROCESSING:
+   - UnrealBloomPass (strength: 0.5, radius: 0.5, threshold: 0.8)
+   - Creates soft glow on emissive materials
+
+4. MODEL ANIMATIONS (continuous):
+   - Each model floats gently: position.y += Math.sin(time + offset) * 0.05
+   - Slow rotation: rotation.y += 0.002
+   - Subtle emissive pulse on materials
+
+══════════════════════════════════════════════════════════════
+INTERACTIONS (use GSAP for all animations):
+══════════════════════════════════════════════════════════════
+HOVER:
+- gsap.to(model.scale, {{x:1.15, y:1.15, z:1.15, duration:0.3, ease:"back.out"}})
+- Increase emissive intensity
+- Show floating tooltip near cursor
+- Spawn 5-10 tiny particles that fade out
+
+CLICK:
+- gsap.to(camera.position, {{...targetPos, duration:1.5, ease:"power2.inOut"}})
+- Burst of 20+ particles outward from model
+- Model pulses 3 times (scale 1.0→1.1→1.0)
+- Other models dim (reduce opacity to 0.3)
+- Info panel slides in with glassmorphism effect
+- IMPORTANT - Play audio narration:
+  ```
+  if(currentAudio) currentAudio.pause();
+  currentAudio = new Audio(model.userData.audio_url);
+  currentAudio.play().catch(e => console.log('Audio:', e));
+  ```
+
+DESELECT (click empty space):
+- Camera returns to original position
+- All models restore full opacity
+- Info panel slides out
+
+══════════════════════════════════════════════════════════════
+UI DESIGN:
+══════════════════════════════════════════════════════════════
+- Title: top center, elegant font, text-shadow glow
+- Info Panel: glassmorphism (backdrop-filter:blur(10px), rgba bg, border glow)
+- Loading: centered spinner with "Loading Experience..." text
+- Help hint: "Click models to explore • Drag to rotate" (fades after 5s)
+- All UI uses CSS transitions for smooth show/hide
+
+══════════════════════════════════════════════════════════════
+TECHNICAL:
+══════════════════════════════════════════════════════════════
+- Single self-contained HTML file
+- Use Raycaster for mouse picking
+- Responsive (mobile touch works)
+- 60fps animation loop
+- Proper error handling for model loading
+
+OUTPUT: Complete HTML only. Start with <!DOCTYPE html>, end with </html>.
+No markdown, no explanations.
 """
 
 
@@ -84,7 +115,6 @@ async def generate_html(
     narrations: dict[str, str],
     audio_urls: dict[str, str],
     llm: LLM,
-    base_url: str = "",
 ) -> str:
     """Generate complete HTML file with Three.js scene.
 
@@ -92,9 +122,8 @@ async def generate_html(
         analysis: Content analysis from the document
         models: List of matched 3D models
         narrations: Dictionary mapping model ID to narration text
-        audio_urls: Dictionary mapping model ID to audio URLs
+        audio_urls: Dictionary mapping model ID to audio data URIs (base64) or URLs
         llm: LLM instance for generation
-        base_url: Base URL for resolving relative assets (used in local mode)
 
     Returns:
         Complete HTML file as a string
@@ -107,26 +136,19 @@ async def generate_html(
         title=analysis.title,
         model_count=len(models),
         has_audio=bool(audio_urls),
-        base_url=base_url,
     )
 
     # Prepare model data for the prompt
     models_data = []
     for model in models:
-        # Prepend base_url to relative URLs (e.g., /static/...)
-        model_url = model.url
-        if base_url and model_url.startswith("/"):
-            model_url = f"{base_url}{model_url}"
-
+        # Audio URLs are now either base64 data URIs or public URLs
         audio_url = audio_urls.get(model.id, "")
-        if base_url and audio_url.startswith("/"):
-            audio_url = f"{base_url}{audio_url}"
 
         models_data.append(
             {
                 "id": model.id,
                 "name": model.name,
-                "url": model_url,
+                "url": model.url,
                 "description": model.description,
                 "narration_text": narrations.get(model.id, ""),
                 "audio_url": audio_url,
@@ -139,7 +161,6 @@ async def generate_html(
         background_color=analysis.visual_theme.primary_color,
         subject_area=analysis.subject_area,
         models_json=json.dumps(models_data, indent=2),
-        narrations_json=json.dumps(narrations, indent=2),
     )
 
     try:
@@ -175,7 +196,20 @@ async def generate_html(
             if html_end != -1:
                 html = html[: html_end + 7]
             else:
-                raise HTMLGenerationError("Invalid HTML output: missing </html>")
+                # Try to repair truncated HTML by closing open tags
+                logger.warning("html_truncated_attempting_repair", length=len(html))
+                repairs = []
+                if "<script" in html and html.count("<script") > html.count("</script>"):
+                    repairs.append("\n</script>")
+                if "<body" in html and "</body>" not in html:
+                    repairs.append("\n</body>")
+                if "<html" in html and "</html>" not in html:
+                    repairs.append("\n</html>")
+                if repairs:
+                    html = html + "".join(repairs)
+                    logger.info("html_repaired", repairs=repairs)
+                else:
+                    raise HTMLGenerationError("Invalid HTML output: missing </html>")
 
         logger.info("html_generation_complete", size_bytes=len(html.encode("utf-8")))
         return html

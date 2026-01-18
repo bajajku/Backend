@@ -1,5 +1,6 @@
 """Narration generation and TTS synthesis service."""
 
+import base64
 import httpx
 import structlog
 
@@ -81,11 +82,19 @@ async def generate_narrations(
     return narrations
 
 
+class AudioResult:
+    """Container for audio synthesis results."""
+
+    def __init__(self):
+        self.urls: dict[str, str] = {}  # model_id -> URL (for prompts)
+        self.base64: dict[str, str] = {}  # model_id -> base64 data URI (for embedding)
+
+
 async def synthesize_audio(
     narrations: dict[str, str],
     settings: Settings,
     gcs_client: GCSClient,
-) -> dict[str, str]:
+) -> AudioResult:
     """Convert narration text to audio using ElevenLabs TTS.
 
     Args:
@@ -94,19 +103,21 @@ async def synthesize_audio(
         gcs_client: GCS client for uploading audio files
 
     Returns:
-        Dictionary mapping model ID to audio URL (empty dict if TTS unavailable)
+        AudioResult with both URLs (for LLM prompt) and base64 (for HTML embedding).
+        Returns empty AudioResult if TTS is unavailable.
     """
+    result = AudioResult()
+
     # Skip TTS if no API key or default placeholder
     if not settings.elevenlabs_api_key or "your_elevenlabs_api_key" in settings.elevenlabs_api_key:
         logger.info(
             "tts_skipped",
             reason="no_api_key" if not settings.elevenlabs_api_key else "placeholder_key",
         )
-        return {}
+        return result
 
     logger.info("synthesizing_audio", narration_count=len(narrations))
 
-    audio_urls: dict[str, str] = {}
     elevenlabs_url = "https://api.elevenlabs.io/v1/text-to-speech"
 
     async with httpx.AsyncClient() as client:
@@ -140,15 +151,23 @@ async def synthesize_audio(
                     continue
 
                 audio_bytes = response.content
+
+                # Generate both URL and base64 from same audio bytes
                 filename = f"{model_id}.mp3"
                 url = await gcs_client.upload_audio(audio_bytes, filename)
-                audio_urls[model_id] = url
+                result.urls[model_id] = url
 
-                logger.debug("audio_synthesized", model_id=model_id, url=url)
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                result.base64[model_id] = f"data:audio/mpeg;base64,{audio_b64}"
+
+                logger.debug(
+                    "audio_synthesized",
+                    model_id=model_id,
+                    size_bytes=len(audio_bytes),
+                )
 
             except Exception as e:
                 logger.error("tts_failed", model_id=model_id, error=str(e))
-                # Continue with other models even if one fails
 
-    logger.info("audio_synthesis_complete", count=len(audio_urls))
-    return audio_urls
+    logger.info("audio_synthesis_complete", count=len(result.urls))
+    return result

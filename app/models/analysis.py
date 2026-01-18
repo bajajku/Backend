@@ -55,3 +55,83 @@ class NarrationData(BaseModel):
     model_id: str
     text: str
     audio_url: str | None = None
+
+
+# ============================================================
+# NEW: Concept Graph Models for LLM-Generated 3D Scenes
+# ============================================================
+
+
+class ConceptNode(BaseModel):
+    """A concept node in the knowledge graph."""
+
+    id: str = Field(description="Unique identifier for the concept")
+    name: str = Field(description="Display name")
+    description: str = Field(description="Full description/explanation")
+    category: str = Field(description="Category for grouping and coloring")
+    importance: int = Field(ge=1, le=5, default=3, description="Importance 1-5")
+    parent_id: str | None = Field(default=None, description="Parent concept ID if hierarchical")
+    shape: Literal["sphere", "box", "cylinder", "cone", "torus", "octahedron"] = Field(
+        default="sphere", description="3D shape to represent this concept"
+    )
+    color: str | None = Field(default=None, description="Specific color override (hex)")
+
+
+class ConceptRelationship(BaseModel):
+    """A relationship between two concepts."""
+
+    from_id: str = Field(description="Source concept ID")
+    to_id: str = Field(description="Target concept ID")
+    relationship_type: Literal[
+        "contains",      # parent contains child
+        "relates_to",    # general relationship
+        "causes",        # cause and effect
+        "part_of",       # part-whole relationship
+        "leads_to",      # sequential/temporal
+        "contrasts",     # opposing concepts
+        "supports",      # supporting evidence
+    ] = Field(default="relates_to")
+    label: str | None = Field(default=None, description="Optional label for the connection")
+    strength: int = Field(ge=1, le=5, default=3, description="Relationship strength 1-5")
+
+
+class ConceptCategory(BaseModel):
+    """A category for grouping concepts."""
+
+    id: str
+    name: str
+    color: str = Field(description="Hex color for this category")
+    description: str | None = None
+
+
+class ConceptGraph(BaseModel):
+    """Complete concept graph extracted from document."""
+
+    title: str = Field(description="Title for the 3D experience")
+    summary: str = Field(description="Brief summary of the document (2-3 sentences)")
+    subject_area: str = Field(description="Subject area")
+
+    # Layout recommendation
+    layout_type: Literal[
+        "concept-map",   # Central concept with orbiting related concepts
+        "hierarchy",     # Tree structure for hierarchical content
+        "timeline",      # Linear progression for sequential content
+        "clusters",      # Grouped by categories
+        "network",       # Free-form network of relationships
+    ] = Field(default="concept-map")
+
+    # The graph data
+    central_concept_id: str = Field(description="ID of the main/central concept")
+    concepts: list[ConceptNode] = Field(description="All concept nodes")
+    relationships: list[ConceptRelationship] = Field(description="Relationships between concepts")
+    categories: list[ConceptCategory] = Field(description="Categories for grouping")
+
+    # Visual theme
+    background_color: str = Field(default="#0a0a1a", description="Scene background color")
+    ambient_color: str = Field(default="#ffffff", description="Ambient light color")
+
+    # Learning path (optional)
+    suggested_exploration_order: list[str] = Field(
+        default_factory=list,
+        description="Suggested order to explore concepts (list of IDs)"
+    )
