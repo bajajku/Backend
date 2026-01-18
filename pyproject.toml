@@ -1,0 +1,29 @@
+[project]
+name = "doc-to-3d-backend"
+version = "1.0.0"
+description = "Python backend that transforms documents into interactive 3D HTML experiences with AI-generated narration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.6",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.26.0",
+    "langchain>=0.1.0",
+    "langchain-google-genai>=0.0.1",
+    "google-cloud-storage>=2.14.0",
+    "PyMuPDF>=1.23.0",
+    "python-pptx>=0.6.21",
+    "elevenlabs>=1.0.0",
+    "structlog>=24.1.0",
+    "aiofiles>=23.2.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.26.0",
+]
